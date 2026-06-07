@@ -194,12 +194,24 @@ def trigger_scraper():
     Triggers the Rust scraper service to fetch new jobs.
     """
     base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-    executable_path = os.path.join(base_dir, "scraper", "target", "debug", "scraper.exe")
+    
+    candidates = [
+        os.path.join(base_dir, "scraper", "target", "release", "scraper"),
+        os.path.join(base_dir, "scraper", "target", "debug", "scraper"),
+        os.path.join(base_dir, "scraper", "target", "release", "scraper.exe"),
+        os.path.join(base_dir, "scraper", "target", "debug", "scraper.exe"),
+    ]
+    
+    executable_path = None
+    for path in candidates:
+        if os.path.exists(path):
+            executable_path = path
+            break
 
-    if not os.path.exists(executable_path):
+    if not executable_path:
         raise HTTPException(
             status_code=500,
-            detail=f"Scraper executable not found at {executable_path}. Please build it first."
+            detail=f"Scraper executable not found. Tested paths: {', '.join(candidates)}. Please build it first."
         )
 
     try:
