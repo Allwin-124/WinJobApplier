@@ -1,0 +1,10 @@
+[package]
+name = "scraper"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+rusqlite = { version = "0.31.0", features = ["bundled"] }
+reqwest = { version = "0.12.4", features = ["blocking"] }
+feed-rs = "2.0.0"
+anyhow = "1.0.86"
