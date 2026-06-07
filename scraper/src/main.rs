@@ -55,8 +55,10 @@ fn connect_db() -> Result<Client> {
     let db_url = std::env::var("DATABASE_URL")
         .map_err(|_| anyhow::anyhow!("DATABASE_URL environment variable is not set in environment or .env file"))?;
         
-    // Build TLS connector since Supabase requires secure connections
-    let connector = native_tls::TlsConnector::new()?;
+    // Build TLS connector that accepts untrusted certificate chains to bypass Windows trust store issues
+    let connector = native_tls::TlsConnector::builder()
+        .danger_accept_invalid_certs(true)
+        .build()?;
     let connector = MakeTlsConnector::new(connector);
     
     let client = Client::connect(&db_url, connector)?;
@@ -129,6 +131,7 @@ fn main() -> Result<()> {
 
     let client = reqwest::blocking::Client::builder()
         .user_agent("WinJobApplierScraper/1.0")
+        .danger_accept_invalid_certs(true)
         .build()?;
 
     let search_term = keywords.first().cloned().unwrap_or_else(|| "developer".to_string());
