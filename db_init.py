@@ -39,7 +39,11 @@ def initialize_database():
             status TEXT NOT NULL DEFAULT 'scraped',
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
             applied_at TIMESTAMP,
-            location TEXT
+            location TEXT,
+            ats_score INTEGER,
+            ats_matching TEXT,
+            ats_missing TEXT,
+            ats_recommendations TEXT
         );
         """)
 

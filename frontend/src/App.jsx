@@ -21,6 +21,7 @@ import {
 import './App.css';
 import { supabase } from './supabase';
 import Login from './components/Login';
+import JobDetailsModal from './components/JobDetailsModal';
 
 const GithubIcon = ({ size = 24, ...props }) => (
   <svg
@@ -47,7 +48,6 @@ function App() {
   const [session, setSession] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [lastSynced, setLastSynced] = useState(null);
-  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [activeTab, setActiveTab] = useState('jobs');
   const [jobs, setJobs] = useState([]);
   const [settings, setSettings] = useState({
@@ -61,6 +61,9 @@ function App() {
     country: 'in',
     state: ''
   });
+  
+  // ATS Scorecard & Gemini state
+  const [selectedJob, setSelectedJob] = useState(null);
   
   // Loading states
   const [loadingJobs, setLoadingJobs] = useState(false);
@@ -513,16 +516,33 @@ function App() {
             ) : (
               <div className="jobs-grid">
                 {filteredJobs.map(job => (
-                  <div className="job-card" key={job.id}>
+                  <div 
+                    className="job-card" 
+                    key={job.id}
+                    onClick={(e) => {
+                      if (e.target.tagName === 'SELECT' || e.target.closest('a') || e.target.closest('.status-select')) {
+                        return;
+                      }
+                      setSelectedJob(job);
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  >
                     <div>
                       <div className="job-header">
                         <div className="job-info">
                           <h3>{job.title}</h3>
                           <div className="job-company">{job.company}</div>
                         </div>
-                        <span className={`status-pill status-${job.status?.toLowerCase() || 'pending'}`}>
-                          {job.status || 'Pending'}
-                        </span>
+                        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
+                          <span className={`status-pill status-${job.status?.toLowerCase() || 'pending'}`}>
+                            {job.status || 'Pending'}
+                          </span>
+                          {job.ats_score !== null && job.ats_score !== undefined && (
+                            <span className={`ats-badge-pill ${job.ats_score >= 80 ? 'high' : job.ats_score >= 50 ? 'med' : 'low'}`}>
+                              ATS: {job.ats_score}%
+                            </span>
+                          )}
+                        </div>
                       </div>
                       
                       <div className="job-meta-row">
@@ -577,71 +597,6 @@ function App() {
                 ))}
               </div>
             )}
-          </div>
-        )}
-
-        {activeTab === 'scraper' && (
-          <div>
-            <div className="view-header">
-              <div className="header-title">
-                <h1>Scraper Console</h1>
-                <p>Control and monitor the Rust-based background job scraper</p>
-              </div>
-            </div>
-
-            <div className="scraper-control-card">
-              <div className="scraper-status-info">
-                <span className={`status-dot ${scraperRunning ? 'active' : ''}`}></span>
-                <div className="scraper-status-text">
-                  <h2>{scraperRunning ? 'Scraper active and running' : 'Scraper is currently idle'}</h2>
-                  <p>
-                    {scraperRunning 
-                      ? 'The scraper is fetching active jobs based on settings profile parameters...' 
-                      : 'Trigger the scraping process to scan platforms for job postings.'}
-                  </p>
-                </div>
-              </div>
-              <button 
-                className="btn-primary" 
-                onClick={triggerScraper} 
-                disabled={scraperRunning}
-                style={{ padding: '10px 18px' }}
-              >
-                {scraperRunning ? <RefreshCw size={14} className="spinner" /> : <Play size={14} />}
-                <span>{scraperRunning ? 'Scraping...' : 'Trigger Scraper'}</span>
-              </button>
-            </div>
-
-            {/* Terminal console */}
-            <div className="terminal-container">
-              <div className="terminal-header">
-                <div className="terminal-dots">
-                  <span className="terminal-dot"></span>
-                  <span className="terminal-dot"></span>
-                  <span className="terminal-dot"></span>
-                </div>
-                <div className="terminal-title">scraper_agent_runner.log</div>
-                <div style={{ width: '42px' }}></div>
-              </div>
-              <div className="terminal-body">
-                {logs.map((log, idx) => {
-                  let cls = 'terminal-line';
-                  if (log.startsWith('> [') || log.startsWith('\n> [')) cls += ' command';
-                  else if (log.toLowerCase().includes('success')) cls += ' success';
-                  else if (log.toLowerCase().includes('failed') || log.toLowerCase().includes('error')) cls += ' error';
-                  return (
-                    <div className={cls} key={idx}>
-                      {log}
-                    </div>
-                  );
-                })}
-                {scraperRunning && (
-                  <div className="terminal-line system">
-                    &gt; Running rust binary... details will stream back upon process completion...
-                  </div>
-                )}
-              </div>
-            </div>
           </div>
         )}
 
@@ -830,76 +785,6 @@ function App() {
                       required
                     />
                   </div>
-
-                  <div className="form-group full-width" style={{ marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
-                    <button 
-                      type="button" 
-                      className="btn-secondary" 
-                      style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '34px' }}
-                      onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
-                    >
-                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                        <TerminalIcon size={13} />
-                        <span>Advanced Developer Options</span>
-                      </span>
-                      <span style={{ fontSize: '0.75rem' }}>{showAdvancedSettings ? 'Hide' : 'Show'}</span>
-                    </button>
-
-                    {showAdvancedSettings && (
-                      <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
-                        <div className="scraper-control-card" style={{ marginBottom: '0', padding: '12px 16px' }}>
-                          <div className="scraper-status-info">
-                            <span className={`status-dot ${scraperRunning ? 'active' : ''}`}></span>
-                            <div className="scraper-status-text">
-                              <h2 style={{ fontSize: '0.82rem' }}>{scraperRunning ? 'Scraper active and running' : 'Scraper is currently idle'}</h2>
-                              <p style={{ fontSize: '0.7rem' }}>Manual trigger scans active platforms for job listings.</p>
-                            </div>
-                          </div>
-                          <button 
-                            type="button"
-                            className="btn-primary" 
-                            onClick={triggerScraper} 
-                            disabled={scraperRunning}
-                            style={{ padding: '6px 12px', fontSize: '0.76rem' }}
-                          >
-                            {scraperRunning ? <RefreshCw size={12} className="spinner" /> : <Play size={12} />}
-                            <span>{scraperRunning ? 'Scraping...' : 'Trigger Scraper'}</span>
-                          </button>
-                        </div>
-
-                        {/* Terminal console */}
-                        <div className="terminal-container">
-                          <div className="terminal-header" style={{ padding: '6px 12px' }}>
-                            <div className="terminal-dots">
-                              <span className="terminal-dot"></span>
-                              <span className="terminal-dot"></span>
-                              <span className="terminal-dot"></span>
-                            </div>
-                            <div className="terminal-title" style={{ fontSize: '0.65rem' }}>scraper_agent_runner.log</div>
-                            <div style={{ width: '42px' }}></div>
-                          </div>
-                          <div className="terminal-body" style={{ height: '200px', padding: '10px' }}>
-                            {logs.map((log, idx) => {
-                              let cls = 'terminal-line';
-                              if (log.startsWith('> [') || log.startsWith('\n> [')) cls += ' command';
-                              else if (log.toLowerCase().includes('success')) cls += ' success';
-                              else if (log.toLowerCase().includes('failed') || log.toLowerCase().includes('error')) cls += ' error';
-                              return (
-                                <div className={cls} key={idx}>
-                                  {log}
-                                </div>
-                              );
-                            })}
-                            {scraperRunning && (
-                              <div className="terminal-line system">
-                                &gt; Running rust binary... details will stream back upon process completion...
-                              </div>
-                            )}
-                          </div>
-                        </div>
-                      </div>
-                    )}
-                  </div>
                 </div>
 
                 <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
@@ -918,6 +803,22 @@ function App() {
           </div>
         )}
       </main>
+
+      {selectedJob && (
+        <JobDetailsModal 
+          job={selectedJob} 
+          onClose={() => setSelectedJob(null)} 
+          apiBaseUrl={API_BASE_URL} 
+          onUpdateJob={(jobId, updatedFields) => {
+            setJobs(prevJobs => 
+              prevJobs.map(j => 
+                j.id === jobId ? { ...j, ...updatedFields } : j
+              )
+            );
+            setSelectedJob(prev => prev && prev.id === jobId ? { ...prev, ...updatedFields } : prev);
+          }}
+        />
+      )}
     </div>
   );
 }

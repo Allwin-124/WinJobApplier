@@ -1,7 +1,10 @@
 import os
 import shutil
 import subprocess
-from fastapi import FastAPI, HTTPException, UploadFile, File
+import json
+import time
+import urllib.request
+from fastapi import FastAPI, HTTPException, UploadFile, File, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr
@@ -70,6 +73,10 @@ def extract_text_from_pdf(path: str) -> str:
         return ""
 
 app = FastAPI(title="Win Job Applier Backend", version="1.0.0")
+
+@app.on_event("startup")
+def startup_event():
+    database.run_migrations()
 
 app.add_middleware(
     CORSMiddleware,
@@ -237,3 +244,115 @@ def trigger_scraper():
             status_code=500,
             detail=f"An error occurred while running the scraper: {str(e)}"
         )
+
+@app.post("/api/winjobapplier/jobs/{job_id}/ats-analyze")
+def analyze_job_ats(job_id: int, x_gemini_key: str = Header(None)):
+    """
+    Performs an ATS compatibility and keywords overlap analysis using the Gemini API.
+    """
+    settings = database.get_settings()
+    if not settings or not settings.get("resume_text"):
+        raise HTTPException(
+            status_code=400, 
+            detail="Resume not found. Please upload a resume PDF in your Profile Settings tab first."
+        )
+    
+    resume_text = settings["resume_text"]
+
+    conn = database.get_db_connection()
+    from psycopg2.extras import RealDictCursor
+    cursor = conn.cursor(cursor_factory=RealDictCursor)
+    cursor.execute("SELECT * FROM jobs WHERE id = %s;", (job_id,))
+    job = cursor.fetchone()
+    cursor.close()
+    conn.close()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Job posting not found.")
+
+    gemini_key = x_gemini_key or os.environ.get("GEMINI_API_KEY")
+    if not gemini_key or gemini_key == "YOUR_GEMINI_API_KEY_HERE":
+        raise HTTPException(
+            status_code=400, 
+            detail="Gemini API Key missing. Please provide it in Settings or your .env file."
+        )
+
+    prompt = f"""
+    You are an expert ATS (Applicant Tracking System) parser and executive recruiter.
+    Analyze the compatibility between this candidate's Resume and the Job Description below.
+    
+    [RESUME]
+    {resume_text}
+    
+    [JOB DESCRIPTION]
+    Title: {job['title']}
+    Company: {job['company']}
+    Description: {job['description'] or 'Not provided.'}
+    
+    Return a JSON object matching this schema exactly:
+    {{
+      "score": <integer between 0 and 100 representing match percentage>,
+      "matching_keywords": [<list of key skills, tools, or keywords present in both>],
+      "missing_keywords": [<list of key skills, frameworks, or tools present in the job description but missing/weak in the resume>],
+      "recommendations": [<list of 3 to 5 clear, bulleted tips on how to improve this resume's ATS compatibility for this specific job>]
+    }}
+    Do not output markdown code blocks like ```json, return raw JSON string only.
+    """
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key}"
+    headers = {"Content-Type": "application/json"}
+    payload = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {
+            "responseMimeType": "application/json"
+        }
+    }
+
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            req = urllib.request.Request(
+                url, 
+                data=json.dumps(payload).encode("utf-8"), 
+                headers=headers, 
+                method="POST"
+            )
+            with urllib.request.urlopen(req, timeout=45) as response:
+                res_data = json.loads(response.read().decode("utf-8"))
+                content_text = res_data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                
+                ats_result = json.loads(content_text)
+                
+                score = int(ats_result.get("score", 0))
+                matching_str = json.dumps(ats_result.get("matching_keywords", []))
+                missing_str = json.dumps(ats_result.get("missing_keywords", []))
+                recs_str = json.dumps(ats_result.get("recommendations", []))
+
+                database.update_job_ats_score(job_id, score, matching_str, missing_str, recs_str)
+
+                return {
+                    "id": job_id,
+                    "ats_score": score,
+                    "ats_matching": matching_str,
+                    "ats_missing": missing_str,
+                    "ats_recommendations": recs_str
+                }
+        except Exception as e:
+            is_transient = False
+            # Check for HTTP status codes
+            if hasattr(e, "code") and e.code in [503, 429, 502, 504]:
+                is_transient = True
+            elif "timed out" in str(e).lower():
+                is_transient = True
+
+            if is_transient and attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 2
+                print(f"Transient Gemini API failure ({str(e)}). Retrying in {wait_time}s (Attempt {attempt + 1}/{max_retries})...")
+                time.sleep(wait_time)
+                continue
+            else:
+                print(f"Gemini API failure: {str(e)}")
+                raise HTTPException(
+                    status_code=500, 
+                    detail=f"Failed to analyze resume compatibility: {str(e)}"
+                )

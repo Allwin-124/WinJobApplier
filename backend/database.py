@@ -108,3 +108,34 @@ def update_job_status(job_id: int, status: str):
     cursor.close()
     conn.close()
     return True
+
+def run_migrations():
+    """
+    Dynamically adds ATS scorecard tracking columns to the jobs table if they do not exist.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ats_score INTEGER;")
+    cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ats_matching TEXT;")
+    cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ats_missing TEXT;")
+    cursor.execute("ALTER TABLE jobs ADD COLUMN IF NOT EXISTS ats_recommendations TEXT;")
+    conn.commit()
+    cursor.close()
+    conn.close()
+    print("Database migrations applied successfully.")
+
+def update_job_ats_score(job_id: int, score: int, matching: str, missing: str, recommendations: str):
+    """
+    Saves the ATS scorecard results for a specific job entry.
+    """
+    conn = get_db_connection()
+    cursor = conn.cursor()
+    cursor.execute("""
+        UPDATE jobs
+        SET ats_score = %s, ats_matching = %s, ats_missing = %s, ats_recommendations = %s
+        WHERE id = %s;
+    """, (score, matching, missing, recommendations, job_id))
+    conn.commit()
+    cursor.close()
+    conn.close()
+    return True

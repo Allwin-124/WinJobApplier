@@ -4,9 +4,16 @@ This document outlines the proposed architecture and integration designs for fut
 
 ---
 
-## Phase 2: Core Enhancements
+## Phase 2: Security & Core Enhancements
 
-### 1. AI-Powered Cover Letter Generator
+### 1. User Authentication (Login Page)
+* **Objective:** Secure the entire application behind a login screen. Only authenticated users can access the dashboard.
+* **Technology:** **Supabase Auth** (Email/Password registration).
+* **Architecture:**
+  * **Frontend (React):** Create a secure Login/Signup screen. If no active session exists, the dashboard is hidden, and the user is redirected to the login page.
+  * **Backend (FastAPI):** Validate the JWT token sent in the `Authorization: Bearer <token>` header of every request using Supabase keys to secure backend endpoints.
+
+### 2. AI-Powered Cover Letter Generator
 * **Objective:** Automatically write a tailored cover letter for any matched job description based on the user's resume.
 * **Technology:** **Google Gemini API** (Google AI Studio).
 * **Storage Cost:** 0 MB local disk space (Cloud-hosted API).
@@ -18,7 +25,7 @@ This document outlines the proposed architecture and integration designs for fut
 
 ## Phase 3: CRM & Automation Scaling
 
-### 2. Job Application Pipeline Tracker
+### 3. Job Application Pipeline Tracker
 * **Objective:** Move jobs through stages from detection to hiring.
 * **Database Updates:**
   * Add pipeline state constraints to the `status` column in the `jobs` table:
