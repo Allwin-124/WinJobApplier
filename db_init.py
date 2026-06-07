@@ -36,7 +36,8 @@ def initialize_database():
         status TEXT NOT NULL DEFAULT 'scraped',
         created_at TIMESTAMP
         DEFAULT CURRENT_TIMESTAMP,
-        applied_at TIMESTAMP
+        applied_at TIMESTAMP,
+        location TEXT
         )
             """)
 
@@ -53,14 +54,17 @@ def initialize_database():
         github TEXT,
         portfolio TEXT,
         keywords TEXT,
+        resume_text TEXT,
+        country TEXT DEFAULT 'in',
+        state TEXT DEFAULT '',
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     );
     """)
 
 # Insert a default row of empty settings if it doesn't exist
     cursor.execute("""
-    INSERT OR IGNORE INTO settings (id, name, email, phone, resume_path, linkedin, github, portfolio, keywords)
-    VALUES (1, '', '', '', '', '', '', '', '');
+    INSERT OR IGNORE INTO settings (id, name, email, phone, resume_path, linkedin, github, portfolio, keywords, resume_text, country, state)
+    VALUES (1, '', '', '', '', '', '', '', '', '', 'in', '');
     """)
 
     conn.commit()

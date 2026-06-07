@@ -34,6 +34,7 @@ def update_settings(settings_data: dict):
         UPDATE settings
         SET name = ?, email = ?, phone = ?, resume_path = ?, 
             linkedin = ?, github = ?, portfolio = ?, keywords = ?,
+            resume_text = ?, country = ?, state = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = 1;
     """, (
@@ -44,7 +45,10 @@ def update_settings(settings_data: dict):
         settings_data.get("linkedin", ""),
         settings_data.get("github", ""),
         settings_data.get("portfolio", ""),
-        settings_data.get("keywords", "")
+        settings_data.get("keywords", ""),
+        settings_data.get("resume_text", ""),
+        settings_data.get("country", "in"),
+        settings_data.get("state", "")
     ))
     conn.commit()
     conn.close()

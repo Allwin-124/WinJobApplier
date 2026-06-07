@@ -6,8 +6,68 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, EmailStr
 from typing import Optional
+from pypdf import PdfReader
 
 from backend import database
+
+def load_env_file():
+    base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+    env_path = os.path.join(base_dir, ".env")
+    if os.path.exists(env_path):
+        with open(env_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, val = line.split("=", 1)
+                    os.environ[key.strip()] = val.strip()
+
+load_env_file()
+
+def clean_spaced_out_text(text: str) -> str:
+    lines = text.split('\n')
+    cleaned_lines = []
+    for line in lines:
+        parts = [p for p in line.split(' ') if p]
+        if not parts:
+            cleaned_lines.append("")
+            continue
+            
+        single_char_count = sum(1 for p in parts if len(p) == 1)
+        if len(parts) > 2 and (single_char_count / len(parts)) > 0.6:
+            words = line.split('  ')
+            reconstructed_words = []
+            for word in words:
+                cleaned_word = word.replace(' ', '')
+                if cleaned_word:
+                    reconstructed_words.append(cleaned_word)
+            cleaned_lines.append(' '.join(reconstructed_words))
+        else:
+            cleaned_lines.append(line)
+    return '\n'.join(cleaned_lines)
+
+def extract_text_from_pdf(path: str) -> str:
+    if not path:
+        return ""
+    if not os.path.isabs(path):
+        base_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
+        path = os.path.join(base_dir, path)
+        
+    if not os.path.exists(path):
+        return ""
+        
+    try:
+        reader = PdfReader(path)
+        text = ""
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+        
+        raw_text = text.strip()
+        return clean_spaced_out_text(raw_text)
+    except Exception as e:
+        print(f"Error extracting PDF: {str(e)}")
+        return ""
 
 app = FastAPI(title="Win Job Applier Backend", version="1.0.0")
 
@@ -33,6 +93,8 @@ class SettingsUpdate(BaseModel):
     github: str
     portfolio: str
     keywords: str
+    country: Optional[str] = "in"
+    state: Optional[str] = ""
 
 class JobStatusUpdate(BaseModel):
     status: str    
@@ -54,7 +116,14 @@ def update_user_settings(payload: SettingsUpdate):
     """
     Updates the user profile settings for the WinJobApplier service.
     """
-    updated = database.update_settings(payload.dict())
+    data = payload.dict()
+    # If resume_path is provided, extract its text
+    if payload.resume_path:
+        data["resume_text"] = extract_text_from_pdf(payload.resume_path)
+    else:
+        data["resume_text"] = ""
+        
+    updated = database.update_settings(data)
     if not updated:
         raise HTTPException(status_code=500, detail="Failed to update settings.")
     return {"message": "Settings updated successfully", "settings": updated}
@@ -82,12 +151,18 @@ async def upload_resume(file: UploadFile = File(...)):
         
     db_path = f"uploads/{file.filename}"
     
-    # Retrieve current settings and update the path
+    # Extract text from the uploaded PDF
+    resume_text = ""
+    if file.filename.lower().endswith('.pdf'):
+        resume_text = extract_text_from_pdf(file_path)
+    
+    # Retrieve current settings and update the path and extracted text
     current_settings = database.get_settings()
     if not current_settings:
         raise HTTPException(status_code=500, detail="Settings not found. Please initialize DB first.")
         
     current_settings["resume_path"] = db_path
+    current_settings["resume_text"] = resume_text
     updated = database.update_settings(current_settings)
     
     return {

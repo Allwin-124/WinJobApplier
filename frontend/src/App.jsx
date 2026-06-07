@@ -50,7 +50,9 @@ function App() {
     resume_path: '',
     github: '',
     portfolio: '',
-    keywords: ''
+    keywords: '',
+    country: 'in',
+    state: ''
   });
   
   // Loading states
@@ -654,6 +656,37 @@ function App() {
                         </a>
                       )}
                     </div>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">
+                      <Globe size={14} />
+                      <span>Target Country</span>
+                    </label>
+                    <select 
+                      className="form-input" 
+                      value={settings.country || 'in'}
+                      onChange={(e) => setSettings({ ...settings, country: e.target.value })}
+                    >
+                      <option value="in">India</option>
+                      <option value="us">United States</option>
+                      <option value="gb">United Kingdom</option>
+                      <option value="ca">Canada</option>
+                    </select>
+                  </div>
+
+                  <div className="form-group">
+                    <label className="form-label">
+                      <MapPin size={14} />
+                      <span>State / City (e.g. Karnataka)</span>
+                    </label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      placeholder="e.g. Karnataka or Bangalore"
+                      value={settings.state || ''}
+                      onChange={(e) => setSettings({ ...settings, state: e.target.value })}
+                    />
                   </div>
 
                   <div className="form-group">
