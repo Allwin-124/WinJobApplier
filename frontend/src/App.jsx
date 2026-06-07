@@ -19,6 +19,8 @@ import {
   ExternalLink 
 } from 'lucide-react';
 import './App.css';
+import { supabase } from './supabase';
+import Login from './components/Login';
 
 const GithubIcon = ({ size = 24, ...props }) => (
   <svg
@@ -41,6 +43,11 @@ const GithubIcon = ({ size = 24, ...props }) => (
 const API_BASE_URL = 'http://localhost:8000';
 
 function App() {
+  const searchInputRef = React.useRef(null);
+  const [session, setSession] = useState(null);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [lastSynced, setLastSynced] = useState(null);
+  const [showAdvancedSettings, setShowAdvancedSettings] = useState(false);
   const [activeTab, setActiveTab] = useState('jobs');
   const [jobs, setJobs] = useState([]);
   const [settings, setSettings] = useState({
@@ -65,6 +72,7 @@ function App() {
   // Filtering & Search
   const [searchQuery, setSearchQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState('all');
+  const [previousState, setPreviousState] = useState('');
   
   // Logs & Notification Toast
   const [logs, setLogs] = useState([
@@ -85,6 +93,41 @@ function App() {
   useEffect(() => {
     fetchJobs();
     fetchSettings();
+  }, []);
+
+  // Keyboard shortcut for focusing search
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.key === '/' && document.activeElement !== searchInputRef.current && 
+          document.activeElement.tagName !== 'INPUT' && document.activeElement.tagName !== 'TEXTAREA') {
+        e.preventDefault();
+        searchInputRef.current?.focus();
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  // Listen to Supabase Authentication Session State
+  useEffect(() => {
+    if (!supabase) {
+      setAuthLoading(false);
+      return;
+    }
+
+    // Get active session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setSession(session);
+      setAuthLoading(false);
+    });
+
+    // Listen for auth state changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+      setSession(session);
+      setAuthLoading(false);
+    });
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const showToast = (message, type = 'success') => {
@@ -114,6 +157,7 @@ function App() {
       const data = await response.json();
       if (data) {
         setSettings(data);
+        setPreviousState(data.state || '');
       }
     } catch (error) {
       console.error(error);
@@ -190,8 +234,20 @@ function App() {
       });
       if (!response.ok) throw new Error('Failed to save settings.');
       const data = await response.json();
-      setSettings(data.settings);
-      showToast('Profile settings saved successfully.');
+      const newSettings = data.settings;
+      setSettings(newSettings);
+      
+      // Cache old filter unless the settings location changed, in which case filter to the new one
+      if (newSettings.state && newSettings.state.toLowerCase() !== previousState.toLowerCase()) {
+        setSearchQuery(newSettings.state);
+      }
+      setPreviousState(newSettings.state || '');
+      
+      showToast('Settings saved. Launching scraper...');
+      
+      // Automatically redirect to Job Board and start background scraping
+      setActiveTab('jobs');
+      triggerScraper();
     } catch (error) {
       console.error(error);
       showToast('Failed to save settings. Please verify inputs.', 'error');
@@ -222,6 +278,7 @@ function App() {
         data.output || 'No output log returned.'
       ]);
       showToast('Job scraper completed successfully!');
+      setLastSynced(new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }));
       fetchJobs(); // reload jobs
     } catch (error) {
       console.error(error);
@@ -257,6 +314,18 @@ function App() {
     return matchesSearch && matchesStatus;
   });
 
+  if (authLoading) {
+    return (
+      <div className="auth-wrapper">
+        <RefreshCw size={20} className="spinner" style={{ color: 'var(--primary-light)' }} />
+      </div>
+    );
+  }
+
+  if (!session) {
+    return <Login onAuthSuccess={(s) => setSession(s)} />;
+  }
+
   return (
     <div className="app-container">
       {/* Sidebar navigation */}
@@ -276,14 +345,6 @@ function App() {
           </button>
           
           <button 
-            className={`nav-item ${activeTab === 'scraper' ? 'active' : ''}`}
-            onClick={() => setActiveTab('scraper')}
-          >
-            <TerminalIcon size={18} />
-            <span>Scraper Console</span>
-          </button>
-          
-          <button 
             className={`nav-item ${activeTab === 'settings' ? 'active' : ''}`}
             onClick={() => setActiveTab('settings')}
           >
@@ -295,9 +356,38 @@ function App() {
         <div className="sidebar-footer">
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', justifyContent: 'center', marginBottom: '8px' }}>
             <span className={`status-dot ${scraperRunning ? 'active' : ''}`}></span>
-            <span>{scraperRunning ? 'Scraper Running' : 'Scraper Idle'}</span>
+            <span>{scraperRunning ? 'Running' : 'Scraper Idle'}</span>
           </div>
-          v1.0.0
+          {lastSynced && (
+            <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginBottom: '4px' }}>
+              Last Sync: {lastSynced}
+            </div>
+          )}
+          {session?.user && (
+            <div style={{ borderTop: '1px solid var(--border-color)', paddingTop: '10px', marginTop: '4px', textAlign: 'left' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                <div style={{ width: '24px', height: '24px', borderRadius: '50%', backgroundColor: 'var(--primary-light)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.75rem', fontWeight: 'bold', color: '#000000' }}>
+                  {session.user.email[0].toUpperCase()}
+                </div>
+                <span style={{ fontSize: '0.75rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: '140px', color: 'var(--text-main)' }} title={session.user.email}>
+                  {session.user.email}
+                </span>
+              </div>
+              <button 
+                className="btn-secondary" 
+                style={{ width: '100%', padding: '6px', fontSize: '0.72rem', display: 'flex', justifyContent: 'center' }}
+                onClick={async () => {
+                  if (supabase) {
+                    await supabase.auth.signOut();
+                    setSession(null);
+                  }
+                }}
+              >
+                Sign Out
+              </button>
+            </div>
+          )}
+          <div style={{ fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: '4px' }}>v1.0.0</div>
         </div>
       </aside>
 
@@ -321,75 +411,77 @@ function App() {
                 <p>Track, manage, and transition your active job application pipelines</p>
               </div>
               <button className="btn-primary" onClick={fetchJobs} disabled={loadingJobs}>
-                <RefreshCw size={16} className={loadingJobs ? 'spinner' : ''} />
+                <RefreshCw size={14} className={loadingJobs ? 'spinner' : ''} />
                 <span>Refresh</span>
               </button>
             </div>
 
             {/* Metrics cards */}
             <div className="stats-grid">
-              <div className="stat-card glassmorphism">
+              <div className="stat-card">
                 <div className="stat-header">
                   <span>Total Jobs</span>
-                  <div className="stat-icon-wrapper" style={{ background: 'rgba(59, 130, 246, 0.1)', color: '#3b82f6' }}>
-                    <Briefcase size={16} />
+                  <div className="stat-icon-wrapper" style={{ color: 'var(--primary-light)' }}>
+                    <Briefcase size={14} />
                   </div>
                 </div>
                 <div className="stat-value">{totalJobsCount}</div>
               </div>
               
-              <div className="stat-card glassmorphism">
+              <div className="stat-card">
                 <div className="stat-header">
                   <span>Applied</span>
-                  <div className="stat-icon-wrapper" style={{ background: 'rgba(59, 130, 246, 0.1)', color: '#3b82f6' }}>
-                    <CheckCircle2 size={16} />
+                  <div className="stat-icon-wrapper" style={{ color: '#3b82f6' }}>
+                    <CheckCircle2 size={14} />
                   </div>
                 </div>
                 <div className="stat-value" style={{ color: '#3b82f6' }}>{appliedCount}</div>
               </div>
 
-              <div className="stat-card glassmorphism">
+              <div className="stat-card">
                 <div className="stat-header">
                   <span>Interviews</span>
-                  <div className="stat-icon-wrapper" style={{ background: 'rgba(139, 92, 246, 0.1)', color: '#8b5cf6' }}>
-                    <Clock size={16} />
+                  <div className="stat-icon-wrapper" style={{ color: 'var(--primary-light)' }}>
+                    <Clock size={14} />
                   </div>
                 </div>
-                <div className="stat-value" style={{ color: '#a78bfa' }}>{interviewCount}</div>
+                <div className="stat-value" style={{ color: 'var(--primary-light)' }}>{interviewCount}</div>
               </div>
 
-              <div className="stat-card glassmorphism">
+              <div className="stat-card">
                 <div className="stat-header">
                   <span>Offers</span>
-                  <div className="stat-icon-wrapper" style={{ background: 'rgba(16, 185, 129, 0.1)', color: '#10b981' }}>
-                    <CheckCircle2 size={16} />
+                  <div className="stat-icon-wrapper" style={{ color: 'var(--secondary)' }}>
+                    <CheckCircle2 size={14} />
                   </div>
                 </div>
-                <div className="stat-value" style={{ color: '#10b981' }}>{offeredCount}</div>
+                <div className="stat-value" style={{ color: 'var(--secondary)' }}>{offeredCount}</div>
               </div>
 
-              <div className="stat-card glassmorphism">
+              <div className="stat-card">
                 <div className="stat-header">
                   <span>Rejections</span>
-                  <div className="stat-icon-wrapper" style={{ background: 'rgba(239, 68, 68, 0.1)', color: '#ef4444' }}>
-                    <AlertCircle size={16} />
+                  <div className="stat-icon-wrapper" style={{ color: 'var(--danger)' }}>
+                    <AlertCircle size={14} />
                   </div>
                 </div>
-                <div className="stat-value" style={{ color: '#ef4444' }}>{rejectedCount}</div>
+                <div className="stat-value" style={{ color: 'var(--danger)' }}>{rejectedCount}</div>
               </div>
             </div>
 
             {/* Filters */}
             <div className="filters-container">
               <div className="search-wrapper">
-                <Search size={18} className="search-icon" />
+                <Search size={16} className="search-icon" />
                 <input 
+                  ref={searchInputRef}
                   type="text" 
                   className="search-input" 
                   placeholder="Search jobs by title, company, or location..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                 />
+                <span className="search-shortcut">/</span>
               </div>
               
               <select 
@@ -409,19 +501,19 @@ function App() {
             {/* Jobs card list */}
             {loadingJobs ? (
               <div className="empty-state">
-                <RefreshCw size={40} className="spinner empty-state-icon" />
+                <RefreshCw size={32} className="spinner empty-state-icon" />
                 <h3>Loading jobs...</h3>
               </div>
             ) : filteredJobs.length === 0 ? (
-              <div className="empty-state glassmorphism">
-                <Briefcase size={48} className="empty-state-icon" />
+              <div className="empty-state">
+                <Briefcase size={36} className="empty-state-icon" />
                 <h3>No jobs found</h3>
                 <p>Try clearing filters, searching something else, or run the scraper to find jobs.</p>
               </div>
             ) : (
               <div className="jobs-grid">
                 {filteredJobs.map(job => (
-                  <div className="job-card glassmorphism" key={job.id}>
+                  <div className="job-card" key={job.id}>
                     <div>
                       <div className="job-header">
                         <div className="job-info">
@@ -435,18 +527,18 @@ function App() {
                       
                       <div className="job-meta-row">
                         <div className="job-meta-item">
-                          <MapPin size={12} />
+                          <MapPin size={11} />
                           <span>{job.location || 'Remote'}</span>
                         </div>
                         {job.posted_date && (
                           <div className="job-meta-item">
-                            <Clock size={12} />
+                            <Clock size={11} />
                             <span>{job.posted_date}</span>
                           </div>
                         )}
                         {job.source && (
                           <div className="job-meta-item">
-                            <Tag size={12} />
+                            <Tag size={11} />
                             <span>{job.source}</span>
                           </div>
                         )}
@@ -459,11 +551,11 @@ function App() {
                           href={job.url} 
                           target="_blank" 
                           rel="noopener noreferrer" 
-                          className="btn-primary" 
-                          style={{ padding: '8px 12px', fontSize: '0.8rem', gap: '4px', textDecoration: 'none' }}
+                          className="btn-secondary" 
+                          style={{ padding: '6px 10px', fontSize: '0.75rem', gap: '4px', textDecoration: 'none' }}
                         >
                           <span>Apply Page</span>
-                          <ExternalLink size={12} />
+                          <ExternalLink size={11} />
                         </a>
                       ) : <div />}
                       
@@ -497,7 +589,7 @@ function App() {
               </div>
             </div>
 
-            <div className="scraper-control-card glassmorphism">
+            <div className="scraper-control-card">
               <div className="scraper-status-info">
                 <span className={`status-dot ${scraperRunning ? 'active' : ''}`}></span>
                 <div className="scraper-status-text">
@@ -513,9 +605,9 @@ function App() {
                 className="btn-primary" 
                 onClick={triggerScraper} 
                 disabled={scraperRunning}
-                style={{ padding: '16px 32px' }}
+                style={{ padding: '10px 18px' }}
               >
-                {scraperRunning ? <RefreshCw size={18} className="spinner" /> : <Play size={18} />}
+                {scraperRunning ? <RefreshCw size={14} className="spinner" /> : <Play size={14} />}
                 <span>{scraperRunning ? 'Scraping...' : 'Trigger Scraper'}</span>
               </button>
             </div>
@@ -524,9 +616,9 @@ function App() {
             <div className="terminal-container">
               <div className="terminal-header">
                 <div className="terminal-dots">
-                  <span className="terminal-dot dot-red"></span>
-                  <span className="terminal-dot dot-yellow"></span>
-                  <span className="terminal-dot dot-green"></span>
+                  <span className="terminal-dot"></span>
+                  <span className="terminal-dot"></span>
+                  <span className="terminal-dot"></span>
                 </div>
                 <div className="terminal-title">scraper_agent_runner.log</div>
                 <div style={{ width: '42px' }}></div>
@@ -562,12 +654,14 @@ function App() {
               </div>
             </div>
 
-            <div className="settings-container glassmorphism">
+            <div className="settings-container">
               <form onSubmit={handleSettingsSubmit} className="settings-form">
                 <div className="form-grid">
+                  <h3 className="form-section-title">Candidate Profile</h3>
+                  
                   <div className="form-group">
                     <label className="form-label">
-                      <User size={14} />
+                      <User size={13} />
                       <span>Full Name</span>
                     </label>
                     <input 
@@ -582,7 +676,7 @@ function App() {
 
                   <div className="form-group">
                     <label className="form-label">
-                      <Mail size={14} />
+                      <Mail size={13} />
                       <span>Email Address</span>
                     </label>
                     <input 
@@ -597,7 +691,7 @@ function App() {
 
                   <div className="form-group">
                     <label className="form-label">
-                      <Phone size={14} />
+                      <Phone size={13} />
                       <span>Phone Number</span>
                     </label>
                     <input 
@@ -612,7 +706,26 @@ function App() {
 
                   <div className="form-group">
                     <label className="form-label">
-                      <FileText size={14} />
+                      <Globe size={13} />
+                      <span>Target Country</span>
+                    </label>
+                    <select 
+                      className="form-input" 
+                      value={settings.country || 'in'}
+                      onChange={(e) => setSettings({ ...settings, country: e.target.value })}
+                    >
+                      <option value="in">India</option>
+                      <option value="us">United States</option>
+                      <option value="gb">United Kingdom</option>
+                      <option value="ca">Canada</option>
+                    </select>
+                  </div>
+
+                  <h3 className="form-section-title" style={{ marginTop: '8px' }}>Professional Assets</h3>
+
+                  <div className="form-group">
+                    <label className="form-label">
+                      <FileText size={13} />
                       <span>Resume Document (PDF/Word)</span>
                     </label>
                     <div className="file-upload-wrapper">
@@ -627,19 +740,19 @@ function App() {
                       <label htmlFor="resume-file" className="file-upload-label">
                         {uploadingResume ? (
                           <>
-                            <RefreshCw size={16} className="spinner" />
+                            <RefreshCw size={14} className="spinner" />
                             <span>Uploading document...</span>
                           </>
                         ) : settings.resume_path ? (
                           <>
-                            <CheckCircle2 size={16} style={{ color: 'var(--secondary)' }} />
+                            <CheckCircle2 size={14} style={{ color: 'var(--secondary)' }} />
                             <span className="file-name">
                               {settings.resume_path.split('/').pop()}
                             </span>
                           </>
                         ) : (
                           <>
-                            <FileText size={16} />
+                            <FileText size={14} />
                             <span>Choose resume file...</span>
                           </>
                         )}
@@ -660,38 +773,7 @@ function App() {
 
                   <div className="form-group">
                     <label className="form-label">
-                      <Globe size={14} />
-                      <span>Target Country</span>
-                    </label>
-                    <select 
-                      className="form-input" 
-                      value={settings.country || 'in'}
-                      onChange={(e) => setSettings({ ...settings, country: e.target.value })}
-                    >
-                      <option value="in">India</option>
-                      <option value="us">United States</option>
-                      <option value="gb">United Kingdom</option>
-                      <option value="ca">Canada</option>
-                    </select>
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">
-                      <MapPin size={14} />
-                      <span>State / City (e.g. Karnataka)</span>
-                    </label>
-                    <input 
-                      type="text" 
-                      className="form-input" 
-                      placeholder="e.g. Karnataka or Bangalore"
-                      value={settings.state || ''}
-                      onChange={(e) => setSettings({ ...settings, state: e.target.value })}
-                    />
-                  </div>
-
-                  <div className="form-group">
-                    <label className="form-label">
-                      <GithubIcon size={14} />
+                      <GithubIcon size={13} />
                       <span>GitHub URL</span>
                     </label>
                     <input 
@@ -705,7 +787,7 @@ function App() {
 
                   <div className="form-group">
                     <label className="form-label">
-                      <Globe size={14} />
+                      <Globe size={13} />
                       <span>Portfolio/Website URL</span>
                     </label>
                     <input 
@@ -717,9 +799,25 @@ function App() {
                     />
                   </div>
 
+                  <h3 className="form-section-title" style={{ marginTop: '8px' }}>Scraper Preferences</h3>
+
+                  <div className="form-group">
+                    <label className="form-label">
+                      <MapPin size={13} />
+                      <span>State / City (e.g. Karnataka)</span>
+                    </label>
+                    <input 
+                      type="text" 
+                      className="form-input" 
+                      placeholder="e.g. Karnataka or Bangalore"
+                      value={settings.state || ''}
+                      onChange={(e) => setSettings({ ...settings, state: e.target.value })}
+                    />
+                  </div>
+
                   <div className="form-group full-width">
                     <label className="form-label">
-                      <Tag size={14} />
+                      <Tag size={13} />
                       <span>Search Keywords (Comma Separated)</span>
                     </label>
                     <textarea 
@@ -732,16 +830,86 @@ function App() {
                       required
                     />
                   </div>
+
+                  <div className="form-group full-width" style={{ marginTop: '12px', borderTop: '1px solid var(--border-color)', paddingTop: '16px' }}>
+                    <button 
+                      type="button" 
+                      className="btn-secondary" 
+                      style={{ width: '100%', display: 'flex', justifyContent: 'space-between', alignItems: 'center', height: '34px' }}
+                      onClick={() => setShowAdvancedSettings(!showAdvancedSettings)}
+                    >
+                      <span style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                        <TerminalIcon size={13} />
+                        <span>Advanced Developer Options</span>
+                      </span>
+                      <span style={{ fontSize: '0.75rem' }}>{showAdvancedSettings ? 'Hide' : 'Show'}</span>
+                    </button>
+
+                    {showAdvancedSettings && (
+                      <div style={{ marginTop: '12px', display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                        <div className="scraper-control-card" style={{ marginBottom: '0', padding: '12px 16px' }}>
+                          <div className="scraper-status-info">
+                            <span className={`status-dot ${scraperRunning ? 'active' : ''}`}></span>
+                            <div className="scraper-status-text">
+                              <h2 style={{ fontSize: '0.82rem' }}>{scraperRunning ? 'Scraper active and running' : 'Scraper is currently idle'}</h2>
+                              <p style={{ fontSize: '0.7rem' }}>Manual trigger scans active platforms for job listings.</p>
+                            </div>
+                          </div>
+                          <button 
+                            type="button"
+                            className="btn-primary" 
+                            onClick={triggerScraper} 
+                            disabled={scraperRunning}
+                            style={{ padding: '6px 12px', fontSize: '0.76rem' }}
+                          >
+                            {scraperRunning ? <RefreshCw size={12} className="spinner" /> : <Play size={12} />}
+                            <span>{scraperRunning ? 'Scraping...' : 'Trigger Scraper'}</span>
+                          </button>
+                        </div>
+
+                        {/* Terminal console */}
+                        <div className="terminal-container">
+                          <div className="terminal-header" style={{ padding: '6px 12px' }}>
+                            <div className="terminal-dots">
+                              <span className="terminal-dot"></span>
+                              <span className="terminal-dot"></span>
+                              <span className="terminal-dot"></span>
+                            </div>
+                            <div className="terminal-title" style={{ fontSize: '0.65rem' }}>scraper_agent_runner.log</div>
+                            <div style={{ width: '42px' }}></div>
+                          </div>
+                          <div className="terminal-body" style={{ height: '200px', padding: '10px' }}>
+                            {logs.map((log, idx) => {
+                              let cls = 'terminal-line';
+                              if (log.startsWith('> [') || log.startsWith('\n> [')) cls += ' command';
+                              else if (log.toLowerCase().includes('success')) cls += ' success';
+                              else if (log.toLowerCase().includes('failed') || log.toLowerCase().includes('error')) cls += ' error';
+                              return (
+                                <div className={cls} key={idx}>
+                                  {log}
+                                </div>
+                              );
+                            })}
+                            {scraperRunning && (
+                              <div className="terminal-line system">
+                                &gt; Running rust binary... details will stream back upon process completion...
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </div>
                 </div>
 
-                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '12px' }}>
+                <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '10px' }}>
                   <button 
                     type="submit" 
                     className="btn-primary" 
                     disabled={savingSettings}
-                    style={{ minWidth: '160px' }}
+                    style={{ minWidth: '140px' }}
                   >
-                    {savingSettings && <RefreshCw size={16} className="spinner" />}
+                    {savingSettings && <RefreshCw size={14} className="spinner" />}
                     <span>{savingSettings ? 'Saving...' : 'Save Settings'}</span>
                   </button>
                 </div>
